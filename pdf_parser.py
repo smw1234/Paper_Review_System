@@ -36,7 +36,7 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
     return full_text
 
 
-# 常见章节标题别名。
+# 不同职责包含的标题名
 SECTION_ALIASES = {
     "problem_contribution": [
         "abstract", "摘要",

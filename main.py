@@ -1,7 +1,6 @@
 import logging
 from pathlib import Path
 from typing import Any
-from urllib.request import Request
 
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -12,6 +11,12 @@ from starlette.datastructures import UploadFile
 from starlette.staticfiles import StaticFiles
 
 from pdf_parser import parse_and_group_pdf
+from agents.problem_contribution_agent import problem_agent
+from agents.method_agent import method_agent
+from agents.evaluation_agent import evaluation_agent
+from agents.validity_agent import validity_agent
+from agents.conclusion_agent import conclusion_agent
+from agents.report_agent import report_agent
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -48,22 +53,33 @@ async def review(file: UploadFile=File(...))->ApiResponse:
         raise HTTPException(status_code=413, detail="PDF 文件不能超过 30 MB")
     if not pdf_bytes.startswith(b"%PDF-"):
         raise HTTPException(status_code=400, detail="文件内容不是有效的 PDF")
-        # 下一步：把 pdf_bytes 交给 PDF 解析函数，再调用 LangGraph。
-
+    # 下一步：把 pdf_bytes 交给 PDF 解析函数，返回对应职责需要的正文
     paper_sections  = parse_and_group_pdf(pdf_bytes)
-
-
+    problem_text = paper_sections.get("problem_contribution", "")
+    method_text = paper_sections.get("method", "")
+    evaluation_text = paper_sections.get("evaluation", "")
+    validity_text = paper_sections.get("validity", "")
+    conclusion_text = paper_sections.get("conclusion", "")
+    other_text = paper_sections.get("other", "")
+    #将正文交给对应的agent处理
+    problem_review = problem_agent(problem_text)
+    method_review = method_agent(method_text)
+    evaluation_review = evaluation_agent(evaluation_text)
+    validity_review = validity_agent(validity_text)
+    conclusion_review=conclusion_agent(conclusion_text)
+    #汇总报告
+    review_report = report_agent(
+        problem_review=problem_review,
+        method_review=method_review,
+        evaluation_review=evaluation_review,
+        validity_review=validity_review,
+        conclusion_review=conclusion_review,
+    )
 
     return ApiResponse(
         code=200,
-        message="PDF 接收成功",
-        data={"filename": file.filename, "size": len(pdf_bytes)})
-
-
-
-
-
-
+        message="审稿完成",
+        data=review_report,)
 
 
 
