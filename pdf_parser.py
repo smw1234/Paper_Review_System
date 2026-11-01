@@ -53,7 +53,7 @@ SECTION_ALIASES = {
     "evaluation": [
         "evaluation", "experiments", "experimental evaluation",
         "results", "case study", "user study",
-        "实验", "实验评估", "评估", "结果", "案例研究", "用户研究",
+        "实验结果与分析", "实验评估", "评估", "结果", "案例研究", "用户研究",
     ],
     "validity": [
         "threats to validity", "limitations",
@@ -66,29 +66,23 @@ SECTION_ALIASES = {
 }
 
 def classify_section_heading(line: str) -> str | None:
-    """识别章节标题，并返回对应的审稿职责；普通正文返回 None。"""
+    """识别章节标题，并返回（职责，标题同行的正文)；非标题返回 None。"""
 
     heading = line.strip()
 
-    # 去掉章节编号，例如“2 Methodology”或“3.1 Evaluation”。
-    numbered_heading = re.match(r"^\d+(?:\.\d+)*\.?\s+(.+)$", heading)
-    if numbered_heading:
-        heading = numbered_heading.group(1).strip()
-        is_numbered = True
-    else:
-        is_numbered = False
-
-    normalized_heading = heading.lower()
-
-    # 根据标题别名查找对应职责。
     for role, aliases in SECTION_ALIASES.items():
-        normalized_aliases = [alias.lower() for alias in aliases]
-        if normalized_heading in normalized_aliases:
-            return role
+        # 先匹配较长标题，避免短标题抢先匹配
+        for alias in sorted(aliases, key=len, reverse=True):
+            pattern = (
+                    r"^\s*(?:(?:\d+(?:\.\d+)*|[IVXLCDM]+)\.?\s+)?"
+                    + re.escape(alias)
+                    + r"\s*(?:[—–\-:：.]\s*)?(.*)$"
+            )
 
-    # 有编号但暂时不认识的标题，先归到 other，避免丢失该节内容。
-    if is_numbered:
-        return "other"
+            match = re.match(pattern, heading, flags=re.IGNORECASE)
+            if match:
+                # 摘要—正文 这种格式下，正文会在这里返回
+                return role, match.group(1).strip()
 
     return None
 
@@ -100,11 +94,14 @@ def split_paper_sections(text: str) -> dict[str, str]:
     sections[current_role] = []
 
     for line in text.splitlines():
-        role = classify_section_heading(line)
+        heading_result  = classify_section_heading(line)
 
-        if role is not None:
-            current_role = role
+        if heading_result  is not None:
+            current_role, inline_text = heading_result
             sections.setdefault(current_role, [])
+
+            if inline_text:
+                sections[current_role].append(inline_text)
             continue
 
         sections[current_role].append(line)
@@ -121,4 +118,7 @@ def split_paper_sections(text: str) -> dict[str, str]:
 def parse_and_group_pdf(pdf_bytes: bytes) -> dict[str, str]:
     """提取 PDF 文本，并按审稿职责分组返回的入口。"""
     paper_text = extract_pdf_text(pdf_bytes)
+    for line in paper_text.splitlines():
+        if any(word in line.lower() for word in ["conclusion", "结论", "总结", "展望"]):
+            print(repr(line))
     return split_paper_sections(paper_text)
