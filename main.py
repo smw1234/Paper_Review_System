@@ -11,12 +11,6 @@ from starlette.staticfiles import StaticFiles
 
 from review_graph import build_review_graph
 from pdf_parser import parse_and_group_pdf
-from agents.problem_contribution_agent import  problem_contribution_agent
-from agents.method_agent import method_agent
-from agents.evaluation_agent import evaluation_agent
-from agents.validity_agent import validity_agent
-from agents.conclusion_agent import conclusion_agent
-from agents.report_agent import report_agent
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -43,6 +37,10 @@ class ApiResponse(BaseModel):
     message:str
     data:Any=None
 
+
+# 模块加载时创建并编译一次总图
+review_graph = build_review_graph()
+
 @app.post("/api/review", response_model=ApiResponse)
 async def review(file: UploadFile=File(...))->ApiResponse:
     """接收 PDF、解析论文文本、调用 LangGraph 审稿流程、返回 JSON 报告"""
@@ -54,21 +52,24 @@ async def review(file: UploadFile=File(...))->ApiResponse:
     if not pdf_bytes.startswith(b"%PDF-"):
         raise HTTPException(status_code=400, detail="文件内容不是有效的 PDF")
     # 下一步：把 pdf_bytes 交给 PDF 解析函数，返回对应职责需要的正文
-    paper_sections  = parse_and_group_pdf(pdf_bytes)
+    try:
+        paper_sections  = parse_and_group_pdf(pdf_bytes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     # 输入初始状态；图会把它传给各个节点并逐步填入审稿意见。
-    review_graph = build_review_graph()
+
     result = review_graph.invoke({
         "paper_sections": paper_sections,
     })
 
-    # 取出汇总节点生成的报告。
-    review_report = result["review_report"]
 
     return ApiResponse(
         code=200,
         message="审稿完成",
-        data={"result":review_report},)
+        data={
+        "report": result["review_report"],
+    },)
 
 
 
@@ -76,4 +77,15 @@ async def review(file: UploadFile=File(...))->ApiResponse:
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+#结构化输出 包含评分 优缺点和建议
+#评分机制 1-5分 汇总给出平均分
+# 缺失的内容不瞎编
+
+# 重试机制 llm调用失败重试3次
+# 超时控制
+# agent工具集成
+# 前端加载动画显示进度条
+# docker部署
+#微调
 

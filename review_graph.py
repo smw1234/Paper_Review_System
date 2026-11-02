@@ -21,14 +21,16 @@ class ReviewState(TypedDict, total=False):
     paper_sections: dict[str, str]
 
     # 五个审稿 agent 的输出
-    problem_review: str
-    method_review: str
-    evaluation_review: str
-    validity_review: str
-    conclusion_review: str
+    problem_review: dict
+    method_review: dict
+    evaluation_review: dict
+    validity_review: dict
+    conclusion_review: dict
 
+    average_score: float | None
+    scored_dimension_count: int
     # 最终汇总报告
-    review_report: str
+    review_report: dict
 
 def problem_review_node(state: ReviewState) -> dict:
     """审阅问题定义、研究动机和贡献。"""
@@ -84,18 +86,51 @@ def conclusion_review_node(state: ReviewState) -> dict:
 
     return {"conclusion_review": review}
 
+def calculate_average_score(reviews: list[dict]) -> tuple[float | None, int]:
+    """计算有效评分的平均分，score 为 null 的项不参与计算。返回 (平均分, 参与计算的评分数量)。"""
+
+    valid_scores = []
+
+    for review in reviews:
+        score = review.get("score")
+
+        # 只接收 1–5 的整数评分；无法评分或无效评分不参与平均。
+        if isinstance(score, int) and not isinstance(score, bool) and 1 <= score <= 5:
+            valid_scores.append(score)
+
+    if not valid_scores:
+        return None, 0
+    #四舍五入保留两位小数
+    average = round(sum(valid_scores) / len(valid_scores), 2)
+    return average, len(valid_scores)
+
 def report_node(state: ReviewState) -> dict:
-    """收集五份审稿意见，并调用汇总 agent 生成最终报告。"""
+    """收集五份审稿意见，计算平均分，并调用汇总 agent 生成最终报告。"""
 
-    review = report_agent(
-        problem_review=state.get("problem_review", ""),
-        method_review=state.get("method_review", ""),
-        evaluation_review=state.get("evaluation_review", ""),
-        validity_review=state.get("validity_review", ""),
-        conclusion_review=state.get("conclusion_review", ""),
+    reviews = [
+        state.get("problem_review", {}),
+        state.get("method_review", {}),
+        state.get("evaluation_review", {}),
+        state.get("validity_review", {}),
+        state.get("conclusion_review", {}),
+    ]
+
+    average_score, scored_dimension_count = calculate_average_score(reviews)
+
+    report = report_agent(
+        problem_review=state.get("problem_review", {}),
+        method_review=state.get("method_review", {}),
+        evaluation_review=state.get("evaluation_review", {}),
+        validity_review=state.get("validity_review", {}),
+        conclusion_review=state.get("conclusion_review", {}),
+        average_score=average_score,
+        scored_dimension_count=scored_dimension_count,
     )
-
-    return {"review_report": review}
+    return {
+        "average_score": average_score,
+        "scored_dimension_count": scored_dimension_count,
+        "review_report": report,
+    }
 
 def build_review_graph():
     """创建并编译完整的论文审稿工作流。"""
