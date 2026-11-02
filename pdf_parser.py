@@ -118,7 +118,7 @@ def split_paper_sections(text: str) -> dict[str, str]:
 def parse_and_group_pdf(pdf_bytes: bytes) -> dict[str, str]:
     """提取 PDF 文本，并按审稿职责分组返回的入口。"""
     paper_text = extract_pdf_text(pdf_bytes)
-    for line in paper_text.splitlines():
-        if any(word in line.lower() for word in ["conclusion", "结论", "总结", "展望"]):
-            print(repr(line))
+    # for line in paper_text.splitlines():
+    #     if any(word in line.lower() for word in ["conclusion", "结论", "总结", "展望"]):
+    #         print(repr(line))
     return split_paper_sections(paper_text)

@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.staticfiles import StaticFiles
 
+from review_graph import build_review_graph
 from pdf_parser import parse_and_group_pdf
 from agents.problem_contribution_agent import  problem_contribution_agent
 from agents.method_agent import method_agent
@@ -55,30 +56,14 @@ async def review(file: UploadFile=File(...))->ApiResponse:
     # 下一步：把 pdf_bytes 交给 PDF 解析函数，返回对应职责需要的正文
     paper_sections  = parse_and_group_pdf(pdf_bytes)
 
-    print("识别到的职责：", paper_sections.keys())
-    for role, text in paper_sections.items():
-        print(role, len(text), repr(text[:200]))
+    # 输入初始状态；图会把它传给各个节点并逐步填入审稿意见。
+    review_graph = build_review_graph()
+    result = review_graph.invoke({
+        "paper_sections": paper_sections,
+    })
 
-    problem_text = paper_sections.get("problem_contribution", "")
-    method_text = paper_sections.get("method", "")
-    evaluation_text = paper_sections.get("evaluation", "")
-    validity_text = paper_sections.get("validity", "")
-    conclusion_text = paper_sections.get("conclusion", "")
-    other_text = paper_sections.get("other", "")
-    #将正文交给对应的agent处理
-    problem_review = problem_contribution_agent(problem_text)
-    method_review = method_agent(method_text)
-    evaluation_review = evaluation_agent(evaluation_text)
-    validity_review = validity_agent(validity_text)
-    conclusion_review=conclusion_agent(conclusion_text)
-    #汇总报告
-    review_report = report_agent(
-        problem_review=problem_review,
-        method_review=method_review,
-        evaluation_review=evaluation_review,
-        validity_review=validity_review,
-        conclusion_review=conclusion_review,
-    )
+    # 取出汇总节点生成的报告。
+    review_report = result["review_report"]
 
     return ApiResponse(
         code=200,
