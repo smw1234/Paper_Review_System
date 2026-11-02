@@ -73,14 +73,9 @@ async def review(file: UploadFile=File(...))->ApiResponse:
 
 
 
-
-
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
-#结构化输出 包含评分 优缺点和建议
-#评分机制 1-5分 汇总给出平均分
-# 缺失的内容不瞎编
 
 # 重试机制 llm调用失败重试3次
 # 超时控制
