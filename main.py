@@ -67,7 +67,6 @@ async def review(file: UploadFile=File(...))->ApiResponse:
     other_text = paper_sections.get("other", "")
     #将正文交给对应的agent处理
     problem_review = problem_contribution_agent(problem_text)
-    print(problem_review)
     method_review = method_agent(method_text)
     evaluation_review = evaluation_agent(evaluation_text)
     validity_review = validity_agent(validity_text)
