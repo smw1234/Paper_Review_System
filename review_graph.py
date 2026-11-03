@@ -36,9 +36,6 @@ class ReviewState(TypedDict, total=False):
     # 任意 agent 节点失败时写入错误信息
     error: str
 
-    # PDF 解析器按职责划分的章节正文。
-    paper_sections: dict[str, str]
-
     # 每个职责对应的 PDF 页码。
     section_pages: dict[str, list[int]]
 
@@ -97,16 +94,16 @@ def run_review_agent(agent_function,state: ReviewState,
                     + "\n</structured_tables>"
             )
             # 将公式候选及其页码追加到章节文本。
-            if section_formulas:
-                section_text += (
-                        "\n\n<formula_candidates>\n"
-                        + json.dumps(
-                    section_formulas,
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                        + "\n</formula_candidates>"
-                )
+        if section_formulas:
+            section_text += (
+                    "\n\n<formula_candidates>\n"
+                    + json.dumps(
+                section_formulas,
+                ensure_ascii=False,
+                indent=2,
+            )
+                    + "\n</formula_candidates>"
+            )
 
         # 调用 agent；现有 agent 函数接收正文和页面图片。
         # 表格和公式候选已经合并进 section_text。

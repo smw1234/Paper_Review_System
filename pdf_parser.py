@@ -100,7 +100,7 @@ def classify_section_heading(line: str) -> tuple[str,str] | None:
     heading = line.strip()
 
     for role, aliases in SECTION_ALIASES.items():
-        # 先匹配较长标题，避免短标题抢先匹配
+        # 先匹配较长标题，避免短标题抢先匹配 按长度降序排序
         for alias in sorted(aliases, key=len, reverse=True):
             pattern = (
                     r"^\s*(?:(?:\d+(?:\.\d+)*|[IVXLCDM]+)\.?\s+)?"
@@ -117,7 +117,7 @@ def classify_section_heading(line: str) -> tuple[str,str] | None:
 
 
 def split_pages_into_sections(pages: list[dict]) -> tuple[dict[str, str], dict[str, list[int]], list[list[str]]]:
-    """按章节标题把逐页文本组合成各职责的正文，并记录每页职责。"""
+    """（页码，正文）按章节标题把逐页文本组合成各职责的正文，并记录每页职责。"""
     # 每个职责先存放多行文字，最后再拼接。
     section_lines: dict[str, list[str]] = {
         "other": [],
@@ -166,10 +166,10 @@ def split_pages_into_sections(pages: list[dict]) -> tuple[dict[str, str], dict[s
         roles_by_page.append(roles_on_page)
         # 把当前页码登记到涉及的每个职责下。
         for role in roles_on_page:
-            page_numbers = section_page_numbers.setdefault(role, [])
+            section_page_numbers.setdefault(role, [])
 
-            if page["page"] not in page_numbers:
-                page_numbers.append(page["page"])
+            if page["page"] not in section_page_numbers[role]:
+                section_page_numbers[role].append(page["page"])
 
         # 把每个职责的多行正文合并成字符串，并去掉空章节。
     sections = {}
@@ -199,7 +199,7 @@ def extract_page_tables(pdf_page, page_number: int) -> list[dict]:
         # 表格识别失败不应导致整份 PDF 解析失败。
         logger.exception("第 %s 页表格识别失败", page_number)
         return []
-
+    #存储最终提取到的表格。用集合来存储已经见过的表格内容用于去重
     extracted_tables = []
     seen_rows = set()
 
@@ -248,7 +248,7 @@ def extract_page_tables(pdf_page, page_number: int) -> list[dict]:
 
 def extract_formula_candidates(page_text: str, page_number: int) -> list[dict]:
     """从页面文本中筛出可能的公式行，保留原始文字和页码。"""
-
+    #存储筛选出的公式候选行  集合去重
     candidates = []
     seen_lines = set()
 
@@ -326,7 +326,7 @@ def render_page_as_base64(pdf_page) -> str:
         optimize=True,
     )
 
-    # 模型接口使用 Base64 data URL 接收图片。
+    # 模型接口使用 Base64 data URL 接收图片。最终返回纯文本形式的 Base64 字符串
     return base64.b64encode(
         jpeg_buffer.getvalue()
     ).decode("utf-8")
@@ -357,7 +357,8 @@ def attach_visual_pages(
     )
 
     try:
-        # 同时遍历提取出的页文本、职责关系和 PDF 页面对象。
+        # zip-(页码 ，该页文本，这页包含的职责）索引从0开始
+        # 0，（（页码，文本），职责）
         for page_index, (page_info, page_roles) in enumerate(
                 zip(pages, roles_by_page)
         ):
@@ -403,6 +404,7 @@ def attach_visual_pages(
             roles_to_attach = []
 
             for role in page_roles:
+                #返回当前职责的value值
                 images_for_role = section_images.setdefault(role, [])
 
                 # 每个职责最多发送配置数量的页面图片。
@@ -414,7 +416,8 @@ def attach_visual_pages(
                             omitted_visual_pages.get(role, 0) + 1
                     )
 
-        # 所有相关职责都达到上限时，跳过图片渲染。
+            # 所有相关职责都达到上限时，跳过图片渲染。
+            #当前页的图片已经达到上限 进入下一页的时候 不再加入图片，roles_to_attach里就不会再加入职责 所以就可能为空
             if not roles_to_attach:
                  continue
 
