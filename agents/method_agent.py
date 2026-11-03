@@ -3,6 +3,7 @@ import os
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
+from agents.multimodal_input import build_section_message
 from agents.review_schema import ReviewResult
 
 llm = ChatOpenAI(
@@ -74,10 +75,13 @@ agent = create_agent(
 )
 
 
-def method_agent(method_text: str) -> dict:
-    """审阅论文的方法、设计和实现章节。"""
+def method_agent(method_text: str,
+    visual_pages: list[dict] | None = None,
+    omitted_visual_pages: int = 0,
+) -> dict:
+    """审阅研究方法正文和该章节页面图片。"""
 
-    if not method_text.strip():
+    if not method_text.strip() and not visual_pages:
         return ReviewResult(
             score=None,
             score_reason="没有收到研究方法相关章节，无法评分。",
@@ -87,17 +91,19 @@ def method_agent(method_text: str) -> dict:
             insufficient_information=["研究方法", "研究设计", "系统实现"],
         ).model_dump()
 
+        # 构造包含方法章节文字和对应页面图片的 user 消息。
+    message_content = build_section_message(
+            section_name="研究方法",
+            section_text=method_text,
+            visual_pages=visual_pages,
+            omitted_visual_pages=omitted_visual_pages,
+        )
     result = agent.invoke(
         {
             "messages": [
                 {
                     "role": "user",
-                    "content": (
-                        "只根据以下论文内容进行审阅。"
-                        "不要补造未提供的信息；判断所需信息缺失时，"
-                        "将 score 设为 null，并说明缺少什么。\n\n"
-                        f"<paper_sections>\n{method_text}\n</paper_sections>"
-                    ),
+                    "content": message_content,
                 }
             ]
         }

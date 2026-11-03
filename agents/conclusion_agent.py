@@ -4,6 +4,7 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
 from agents.review_schema import ReviewResult
+from agents.multimodal_input import build_section_message
 
 llm = ChatOpenAI(
     model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
@@ -75,10 +76,13 @@ agent = create_agent(
 )
 
 
-def conclusion_agent(conclusion_text: str) -> dict:
-    """审阅论文的结论及未来工作章节。"""
+def conclusion_agent( conclusion_text: str,
+    visual_pages: list[dict] | None = None,
+    omitted_visual_pages: int = 0,
+) -> dict:
+    """审阅结论正文和结论章节所在页面的图片。"""
 
-    if not conclusion_text.strip():
+    if not conclusion_text.strip() and not visual_pages:
         return ReviewResult(
             score=None,
             score_reason="没有收到论文结论相关章节，无法评分。",
@@ -87,18 +91,19 @@ def conclusion_agent(conclusion_text: str) -> dict:
             suggestions=[],
             insufficient_information=["结论", "未来工作"],
         ).model_dump()
-
+    # 构造含结论正文与页面图像的消息。
+    message_content = build_section_message(
+        section_name="结论",
+        section_text=conclusion_text,
+        visual_pages=visual_pages,
+        omitted_visual_pages=omitted_visual_pages,
+    )
     result = agent.invoke(
         {
             "messages": [
                 {
                     "role": "user",
-                    "content":(
-                        "只根据以下论文内容进行审阅。"
-                        "不要补造未提供的信息；判断所需信息缺失时，"
-                        "将 score 设为 null，并说明缺少什么。\n\n"
-                        f"<paper_sections>\n{conclusion_text}\n</paper_sections>"
-                    ),
+                    "content":message_content,
                 }
             ]
         }

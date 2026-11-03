@@ -1,6 +1,6 @@
 import logging
 from typing import TypedDict
-
+from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from agents.problem_contribution_agent import problem_contribution_agent
@@ -35,6 +35,19 @@ class ReviewState(TypedDict, total=False):
     # 任意 agent 节点失败时写入错误信息
     error: str
 
+    # PDF 解析器按职责划分的章节正文。
+    paper_sections: dict[str, str]
+
+    # 每个职责对应的 PDF 页码。
+    section_pages: dict[str, list[int]]
+
+    # 每个职责对应的页面图片列表。
+    # 每个图片项含 page、page_text、image_base64。
+    section_images: dict[str, list[dict[str, Any]]]
+
+    # 每个职责因图片数量上限而省略的页面数。
+    omitted_visual_pages: dict[str, int]
+
 logger = logging.getLogger(__name__)
 
 def run_review_agent(agent_function,state: ReviewState,
@@ -42,14 +55,31 @@ def run_review_agent(agent_function,state: ReviewState,
     result_key: str,
     agent_name: str,
 ) -> dict:
-    """统一运行一个审稿 agent；失败时记录并写入 error 状态。"""
+    """统一调用章节 agent，并传入该职责的正文和页面图片。"""
     try:
-        sections = state["paper_sections"]
+        sections = state.get("paper_sections",{})
         section_text = sections.get(section_name, "")
-        review = agent_function(section_text)
+        # 取出当前职责对应的页面图片。
+        all_section_images = state.get("section_images", {})
+        visual_pages = all_section_images.get(section_name, [])
 
+        # 取出当前职责因图片数量限制而省略的页数。
+        omitted_pages_by_section = state.get(
+            "omitted_visual_pages",
+            {},
+        )
+        omitted_visual_pages = omitted_pages_by_section.get(
+            section_name,
+            0,
+        )
+        # 调用 agent，同时传入文字和视觉页面。
+        review = agent_function(
+            section_text,
+            visual_pages=visual_pages,
+            omitted_visual_pages=omitted_visual_pages,
+        )
+        # 把当前 agent 的结构化审稿结果写入图状态。
         return {result_key: review}
-
     except Exception as exc:
         logger.exception("%s 调用失败", agent_name)
         return {

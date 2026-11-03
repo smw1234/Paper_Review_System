@@ -3,6 +3,7 @@ import os
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
+from agents.multimodal_input import build_section_message
 from agents.review_schema import ReviewResult
 
 llm = ChatOpenAI(
@@ -73,10 +74,13 @@ agent = create_agent(
 )
 
 
-def validity_agent(validity_text: str) -> dict:
-    """审阅论文的有效性威胁和研究局限。"""
+def validity_agent(validity_text: str,
+    visual_pages: list[dict] | None = None,
+    omitted_visual_pages: int = 0,
+) -> dict:
+    """审阅有效性威胁、研究局限和该章节页面图片。"""
 
-    if not validity_text.strip():
+    if not validity_text.strip() and not visual_pages:
         return ReviewResult(
             score=None,
             score_reason="没有收到有效性威胁或局限性相关内容，无法评分。",
@@ -85,18 +89,19 @@ def validity_agent(validity_text: str) -> dict:
             suggestions=[],
             insufficient_information=["有效性威胁", "研究局限性"],
         ).model_dump()
-
+    # 构造含章节正文与视觉页面的消息。
+    message_content = build_section_message(
+            section_name="有效性与局限",
+            section_text=validity_text,
+            visual_pages=visual_pages,
+            omitted_visual_pages=omitted_visual_pages,
+        )
     result = agent.invoke(
         {
             "messages": [
                 {
                     "role": "user",
-                    "content": (
-                        "只根据以下论文内容进行审阅。"
-                        "不要补造未提供的信息；判断所需信息缺失时，"
-                        "将 score 设为 null，并说明缺少什么。\n\n"
-                        f"<paper_sections>\n{validity_text}\n</paper_sections>"
-                    ),
+                    "content": message_content,
                 }
             ]
         }

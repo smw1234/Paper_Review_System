@@ -1,4 +1,4 @@
-﻿const API_URL = "/api/review";
+const API_URL = "/api/review";
 const MAX_FILE_SIZE = 30 * 1024 * 1024;
 
 const input = document.querySelector("#pdfInput");
@@ -362,3 +362,7 @@ document.querySelector("#downloadButton").addEventListener("click", () => {
 
   URL.revokeObjectURL(url);
 });
+
+
+
+

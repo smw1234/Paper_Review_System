@@ -58,17 +58,48 @@ async def review(file: UploadFile=File(...))->ApiResponse:
     if not pdf_bytes.startswith(b"%PDF-"):
         raise HTTPException(status_code=400, detail="文件内容不是有效的 PDF")
 
-    # 下一步：把 pdf_bytes 交给 PDF 解析函数，返回对应职责需要的正文
     try:
-        paper_sections  = parse_and_group_pdf(pdf_bytes)
+        # parser 现在返回章节文字、页码、图片及省略数量。
+        paper_data = parse_and_group_pdf(pdf_bytes)
     except ValueError as e:
+        # PDF 无法读取或没有文字时，转换成 HTTP 400 错误。
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # 输入初始状态；图会把它传给各个节点并逐步填入审稿意见。
-
+        # 将 parser 返回的四类数据放入 LangGraph 初始状态。
     result = review_graph.invoke({
-        "paper_sections": paper_sections,
+        # 各职责章节的正文。
+        "paper_sections": paper_data["sections"],
+
+        # 各职责章节对应的页码。
+        "section_pages": paper_data["section_pages"],
+
+        # 各职责章节对应的视觉页面。
+        "section_images": paper_data["section_images"],
+
+        # 各职责因数量上限而省略的页面数。
+        "omitted_visual_pages": paper_data["omitted_visual_pages"],
     })
+
+    # 打印 parser 实际识别到的职责名称。
+    logger.info("识别到的职责：%s", list(paper_data["sections"].keys()))
+
+    # 打印每个职责实际提取到的正文字符数。
+    logger.info(
+        "各职责正文长度：%s",
+        {
+            role: len(text)
+            for role, text in paper_data["sections"].items()
+        },
+    )
+
+    # 打印每个职责传给 agent 的页面图片数量。
+    logger.info(
+        "各职责图片页数：%s",
+        {
+            role: len(images)
+            for role, images in paper_data["section_images"].items()
+        },
+    )
 
     if result.get("error"):
         raise HTTPException(status_code=502, detail=result["error"])
@@ -89,8 +120,7 @@ if __name__ == "__main__":
 
 
 # 2agent工具集成
-# 1前端加载动画显示进度条
 # 4docker部署
 #3微调
-#传入图表信息
+#公式 表格结构 引用和参考文献 复杂排版（双栏）
 

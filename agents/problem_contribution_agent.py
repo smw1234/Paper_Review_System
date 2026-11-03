@@ -2,6 +2,7 @@ import os
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from agents.review_schema import ReviewResult
+from agents.multimodal_input import build_section_message
 
 llm = ChatOpenAI(
     model=os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
@@ -69,28 +70,32 @@ agent = create_agent(
     response_format=ReviewResult,)
 
 
-def problem_contribution_agent(paper_text:str)->dict:
-    """审阅论文的问题定义、研究动机和贡献。"""
-    if not paper_text.strip():
+def problem_contribution_agent( paper_text: str,
+    visual_pages: list[dict] | None = None,
+    omitted_visual_pages: int = 0,
+) -> dict:
+    """审阅问题定义、研究动机和贡献，并读取该章节页面图片。"""
+    if not paper_text.strip() and not visual_pages:
         return  ReviewResult(
             score=None,
-            score_reason="未能识别相关章节，无法评分。",
+            score_reason="未能识别相关章节或页面图片，无法评分。",
             strengths=[],
             issues=[],
             suggestions=[],
             insufficient_information=["摘要、引言或相关工作章节"],
         ).model_dump()
-
+        # 把章节文字、页码和图片转换成多模态消息内容。
+    message_content = build_section_message(
+        section_name="问题与贡献",
+        section_text=paper_text,
+        visual_pages=visual_pages,
+        omitted_visual_pages=omitted_visual_pages,
+    )
     response=agent.invoke(
         {"messages": [
             {
                 "role": "user",
-                "content":(
-                        "只根据以下论文内容进行审阅。"
-                        "不要补造未提供的信息；判断所需信息缺失时，"
-                        "将 score 设为 null，并说明缺少什么。\n\n"
-                        f"<paper_sections>\n{paper_text}\n</paper_sections>"
-                    ),
+                "content":message_content,
             }
         ]}
     )

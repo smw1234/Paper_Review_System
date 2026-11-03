@@ -3,6 +3,7 @@ import os
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
+from agents.multimodal_input import build_section_message
 from agents.review_schema import ReviewResult
 
 llm = ChatOpenAI(
@@ -74,10 +75,15 @@ agent = create_agent(
 )
 
 
-def evaluation_agent(evaluation_text: str) -> dict:
-    """审阅论文的实验、评估和结果章节。"""
+def evaluation_agent(evaluation_text: str,
+    visual_pages: list[dict] | None = None,
+    omitted_visual_pages: int = 0,
+) -> dict:
+    """审阅实验评估正文和该章节的图表页面。"""
+    # 统一把未提供的页面列表转成空列表。
+    visual_pages = visual_pages or []
 
-    if not evaluation_text.strip():
+    if not evaluation_text.strip() and not visual_pages:
         return ReviewResult(
             score=None,
             score_reason="没有收到实验或评价相关章节，无法评分。",
@@ -86,18 +92,20 @@ def evaluation_agent(evaluation_text: str) -> dict:
             suggestions=[],
             insufficient_information=["实验设置", "评估方法", "实验结果"],
         ).model_dump()
+    # 把实验正文和对应页面图片整理成多模态消息。
+    message_content = build_section_message(
+            section_name="实验与评估",
+            section_text=evaluation_text,
+            visual_pages=visual_pages,
+            omitted_visual_pages=omitted_visual_pages,
+        )
 
     result = agent.invoke(
         {
             "messages": [
                 {
                     "role": "user",
-                    "content": (
-                        "只根据以下论文内容进行审阅。"
-                        "不要补造未提供的信息；判断所需信息缺失时，"
-                        "将 score 设为 null，并说明缺少什么。\n\n"
-                        f"<paper_sections>\n{evaluation_text}\n</paper_sections>"
-                    ),
+                    "content": message_content,
                 }
             ]
         }
