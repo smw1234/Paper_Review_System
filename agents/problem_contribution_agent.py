@@ -10,6 +10,8 @@ llm = ChatOpenAI(
         "DEEPSEEK_BASE_URL",
         "https://api.deepseek.com",
     ),
+    max_retries=3,
+    timeout=60,
     model_kwargs={
         "extra_body": {
             "thinking": {

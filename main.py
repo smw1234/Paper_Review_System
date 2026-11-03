@@ -12,6 +12,8 @@ from starlette.staticfiles import StaticFiles
 from review_graph import build_review_graph
 from pdf_parser import parse_and_group_pdf
 
+logger = logging.getLogger(__name__)
+
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 MAX_PDF_SIZE = 30 * 1024 * 1024
@@ -44,13 +46,18 @@ review_graph = build_review_graph()
 @app.post("/api/review", response_model=ApiResponse)
 async def review(file: UploadFile=File(...))->ApiResponse:
     """接收 PDF、解析论文文本、调用 LangGraph 审稿流程、返回 JSON 报告"""
+
     if not file.filename or not file .filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400,detail="请上传pdf文件")
+
     pdf_bytes = await file.read(MAX_PDF_SIZE+1)
+
     if len(pdf_bytes) > MAX_PDF_SIZE:
         raise HTTPException(status_code=413, detail="PDF 文件不能超过 30 MB")
+
     if not pdf_bytes.startswith(b"%PDF-"):
         raise HTTPException(status_code=400, detail="文件内容不是有效的 PDF")
+
     # 下一步：把 pdf_bytes 交给 PDF 解析函数，返回对应职责需要的正文
     try:
         paper_sections  = parse_and_group_pdf(pdf_bytes)
@@ -62,6 +69,9 @@ async def review(file: UploadFile=File(...))->ApiResponse:
     result = review_graph.invoke({
         "paper_sections": paper_sections,
     })
+
+    if result.get("error"):
+        raise HTTPException(status_code=502, detail=result["error"])
 
 
     return ApiResponse(
@@ -77,10 +87,10 @@ if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
-# 重试机制 llm调用失败重试3次
-# 超时控制
-# agent工具集成
-# 前端加载动画显示进度条
-# docker部署
-#微调
+
+# 2agent工具集成
+# 1前端加载动画显示进度条
+# 4docker部署
+#3微调
+#传入图表信息
 

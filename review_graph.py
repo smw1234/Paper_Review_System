@@ -1,3 +1,4 @@
+import logging
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -31,60 +32,93 @@ class ReviewState(TypedDict, total=False):
     scored_dimension_count: int
     # 最终汇总报告
     review_report: dict
+    # 任意 agent 节点失败时写入错误信息
+    error: str
+
+logger = logging.getLogger(__name__)
+
+def run_review_agent(agent_function,state: ReviewState,
+    section_name: str,
+    result_key: str,
+    agent_name: str,
+) -> dict:
+    """统一运行一个审稿 agent；失败时记录并写入 error 状态。"""
+    try:
+        sections = state["paper_sections"]
+        section_text = sections.get(section_name, "")
+        review = agent_function(section_text)
+
+        return {result_key: review}
+
+    except Exception as exc:
+        logger.exception("%s 调用失败", agent_name)
+        return {
+            "error": f"{agent_name}调用失败：{type(exc).__name__}: {exc}"
+        }
 
 def problem_review_node(state: ReviewState) -> dict:
     """审阅问题定义、研究动机和贡献。"""
-    sections = state["paper_sections"]
-
-    # 如果解析器没有识别到对应章节，就传空字符串。
-    # agent 函数负责返回“没有相关内容”的提示。
-    review = problem_contribution_agent(
-        sections.get("problem_contribution", "")
+    return run_review_agent(
+        problem_contribution_agent,
+        state,
+        "problem_contribution",
+        "problem_review",
+        "问题与贡献审稿 agent",
     )
-
-    return {"problem_review": review}
 
 def method_review_node(state: ReviewState) -> dict:
     """审阅研究方法、设计和实现。"""
-    sections = state["paper_sections"]
-
-    review = method_agent(
-        sections.get("method", "")
+    return run_review_agent(
+        method_agent,
+        state,
+        "method",
+        "method_review",
+        "研究方法审稿 agent",
     )
-
-    return {"method_review": review}
 
 
 def evaluation_review_node(state: ReviewState) -> dict:
     """审阅实验、评估过程和结果。"""
-    sections = state["paper_sections"]
-
-    review = evaluation_agent(
-        sections.get("evaluation", "")
+    return run_review_agent(
+        evaluation_agent,
+        state,
+        "evaluation",
+        "evaluation_review",
+        "实验与评估审稿 agent",
     )
 
-    return {"evaluation_review": review}
 
 def validity_review_node(state: ReviewState) -> dict:
     """审阅有效性威胁和研究局限。"""
-    sections = state["paper_sections"]
-
-    review = validity_agent(
-        sections.get("validity", "")
+    return run_review_agent(
+        validity_agent,
+        state,
+        "validity",
+        "validity_review",
+        "有效性与局限审稿 agent",
     )
-
-    return {"validity_review": review}
 
 
 def conclusion_review_node(state: ReviewState) -> dict:
     """审阅结论是否受到论文结果支持。"""
-    sections = state["paper_sections"]
-
-    review = conclusion_agent(
-        sections.get("conclusion", "")
+    return run_review_agent(
+        conclusion_agent,
+        state,
+        "conclusion",
+        "conclusion_review",
+        "结论审稿 agent",
     )
 
-    return {"conclusion_review": review}
+def check_reviews_node(state: ReviewState) -> dict:
+    """五个审稿节点完成后的汇合点；只负责让图检查 error 状态。"""
+    return {}
+
+def route_after_reviews(state: ReviewState) -> str:
+    """任何审稿节点出错就跳过汇总。"""
+    if state.get("error"):
+        return "end"
+    return "report"
+
 
 def calculate_average_score(reviews: list[dict]) -> tuple[float | None, int]:
     """计算有效评分的平均分，score 为 null 的项不参与计算。返回 (平均分, 参与计算的评分数量)。"""
@@ -144,6 +178,7 @@ def build_review_graph():
     builder.add_node("evaluation_review", evaluation_review_node)
     builder.add_node("validity_review", validity_review_node)
     builder.add_node("conclusion_review", conclusion_review_node)
+    builder.add_node("check_reviews", check_reviews_node)
     builder.add_node("report", report_node)
 
     # 开始后，同时启动五个互不依赖的审稿节点。
@@ -153,16 +188,21 @@ def build_review_graph():
     builder.add_edge(START, "validity_review")
     builder.add_edge(START, "conclusion_review")
 
+    # 五个节点都完成后汇合到同一个检查节点
+    builder.add_edge("problem_review", "check_reviews")
+    builder.add_edge("method_review", "check_reviews")
+    builder.add_edge("evaluation_review", "check_reviews")
+    builder.add_edge("validity_review", "check_reviews")
+    builder.add_edge("conclusion_review", "check_reviews")
+
     # 这条边表示：等五个审稿节点都完成后，再运行汇总节点。
-    builder.add_edge(
-        [
-            "problem_review",
-            "method_review",
-            "evaluation_review",
-            "validity_review",
-            "conclusion_review",
-        ],
-        "report",
+    builder.add_conditional_edges(
+        "check_reviews",
+        route_after_reviews,
+    {
+        "report": "report",
+        "end": END,
+    },
     )
 
     # 汇总完成后结束整张图。
