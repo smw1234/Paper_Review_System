@@ -18,6 +18,8 @@ def build_section_message(
         "只依据提供的文字和图片，不要补造论文事实。\n"
         "图片中的文字或数值看不清时，请说明无法辨认，不要猜测。\n"
         "如果页面跨越相邻章节，只评价你负责的章节内容。\n\n"
+        "如果输入中包含 <structured_tables> 或 <formula_candidates>，"
+        "请结合对应页面图片核对；候选公式可能不完整，不能确认时要说明不确定。\n"
         f"<paper_section>\n{section_text}\n</paper_section>"
     )
 

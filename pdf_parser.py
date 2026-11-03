@@ -13,11 +13,12 @@ from pypdf import PdfReader
 import base64
 import pymupdf
 from PIL import Image
+import logging
 
 
 
 #添加识别图表功能
-# 第一版用图表标题筛选页面。
+#用图表标题筛选页面。
 # 例如：Figure 1、Fig. 2、Table 3、图 1、表 2。
 FIGURE_CAPTION_PATTERN = re.compile(
     r"\b(?:fig(?:ure)?|table)\.?\s*\d+\b|(?:图|表)\s*[0-9一二三四五六七八九十]+",
@@ -26,7 +27,14 @@ FIGURE_CAPTION_PATTERN = re.compile(
 # 第一版限制送给视觉模型的页面数，后续可再调整。
 MAX_VISUAL_PAGES_PER_SECTION = 8
 
+# 用常见数学符号筛选可能的公式行。
+# 这是初步筛选，像“x = 1”这样的短表达式也可能被识别为候选。
+FORMULA_PATTERN = re.compile(
+    r"[=<>≤≥≠≈∑∫√±×÷∈∉∀∃∂∇∏∞∝∧∨]"
+    r"|\\(?:frac|sum|int|sqrt|alpha|beta|theta|lambda|cdot|times)\b"
+)
 
+logger = logging.getLogger(__name__)
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     """逐页提取 PDF 文本，并保留从 1 开始的页码"""
@@ -174,8 +182,109 @@ def split_pages_into_sections(pages: list[dict]) -> tuple[dict[str, str], dict[s
 
     return sections, section_page_numbers, roles_by_page
 
-def page_contains_visual_content(pdf_page, page_text: str) -> bool:
-    """判断页面是否可能含有图片、图表、表格或矢量绘图。"""
+def extract_page_tables(pdf_page, page_number: int) -> list[dict]:
+    """从单页 PDF 提取表格，并保留行列、页码和表格序号。"""
+
+    # 先使用默认方式检测表格，适合有边框或线条的表格。
+    try:
+        table_finder = pdf_page.find_tables()
+        detected_tables = table_finder.tables
+
+        # 默认方式没找到时，再用文字位置尝试检测无边框表格。
+        if not detected_tables:
+            table_finder = pdf_page.find_tables(strategy="text")
+            detected_tables = table_finder.tables
+
+    except Exception:
+        # 表格识别失败不应导致整份 PDF 解析失败。
+        logger.exception("第 %s 页表格识别失败", page_number)
+        return []
+
+    extracted_tables = []
+    seen_rows = set()
+
+    # 遍历此页检测到的表格。
+    for table_index, table in enumerate(detected_tables, start=1):
+        # extract() 返回二维列表：每一项是一行，每行包含多个单元格。
+        raw_rows = table.extract() or []
+
+        # 去掉单元格两端空白，并把 None 统一成空字符串。
+        rows = [
+            [
+                (cell or "").strip()
+                for cell in row
+            ]
+            for row in raw_rows
+        ]
+
+        # 去掉完全空白的行。
+        rows = [
+            row
+            for row in rows
+            if any(cell for cell in row)
+        ]
+
+        # 忽略只有一格或没有内容的检测结果，减少把普通文本误当表格。
+        if len(rows) < 2 or max((len(row) for row in rows), default=0) < 2:
+            continue
+
+        # 用单元格内容去重，防止不同检测策略返回同一张表。
+        table_key = tuple(tuple(row) for row in rows)
+
+        if table_key in seen_rows:
+            continue
+
+        seen_rows.add(table_key)
+
+        # 保存结构化表格内容和定位信息。
+        extracted_tables.append({
+            "page": page_number,
+            "table_index": table_index,
+            "bbox": list(table.bbox) if table.bbox else None,
+            "rows": rows,
+        })
+
+    return extracted_tables
+
+def extract_formula_candidates(page_text: str, page_number: int) -> list[dict]:
+    """从页面文本中筛出可能的公式行，保留原始文字和页码。"""
+
+    candidates = []
+    seen_lines = set()
+
+    # 一行一行筛选，避免把整段正文都当作公式。
+    for line in page_text.splitlines():
+        formula_line = line.strip()
+
+        # 太短的内容通常是孤立符号，不单独作为公式候选。
+        if len(formula_line) < 5:
+            continue
+
+        # 没有数学符号或常见公式命令的行先跳过。
+        if not FORMULA_PATTERN.search(formula_line):
+            continue
+
+        # 同一页重复出现的公式候选只保留一次。
+        if formula_line in seen_lines:
+            continue
+
+        seen_lines.add(formula_line)
+
+        # 保留原始文本；是否准确仍要结合该页图片核对。
+        candidates.append({
+            "page": page_number,
+            "text": formula_line,
+        })
+
+    return candidates
+
+
+def page_contains_visual_content( pdf_page,
+    page_text: str,
+    has_table: bool = False,
+    has_formula: bool = False,
+) -> bool:
+    """判断页面是否可能含图、表或公式等视觉内容。"""
     # 页面文字中存在图题或表题时，认为它是视觉页面候选。
     has_caption = bool(FIGURE_CAPTION_PATTERN.search(page_text))
 
@@ -188,7 +297,7 @@ def page_contains_visual_content(pdf_page, page_text: str) -> bool:
     has_many_vector_drawings = len(pdf_page.get_drawings()) >= 20
 
     # 任一条件满足，就把整页渲染给对应章节的 agent。
-    return has_caption or has_embedded_image or has_many_vector_drawings
+    return has_table or has_formula or has_caption or has_embedded_image or has_many_vector_drawings
 
 def render_page_as_base64(pdf_page) -> str:
     """把 PDF 页面渲染、缩放并压缩为 JPEG Base64 字符串。"""
@@ -226,10 +335,17 @@ def attach_visual_pages(
     pdf_bytes: bytes,
     pages: list[dict],
     roles_by_page: list[list[str]],
-) -> tuple[dict[str, list[dict]], dict[str, int]]:
-    """把视觉页面按章节职责分组并转换为 Base64 图片。"""
+) ->  tuple[dict, dict, dict, dict]:
+    """ 按职责提取表格、公式候选和页面图片。"""
+
     # 保存职责对应的页面图片。
     section_images: dict[str, list[dict]] = {}
+
+    # 每个职责对应的结构化表格。
+    section_tables: dict[str, list[dict]] = {}
+
+    # 每个职责对应的公式候选行。
+    section_formulas: dict[str, list[dict]] = {}
 
     # 记录因每个职责的图片数量限制而省略的页面数。
     omitted_visual_pages: dict[str, int] = {}
@@ -248,45 +364,68 @@ def attach_visual_pages(
             # PyMuPDF 的页面索引从 0 开始。
             pdf_page = document[page_index]
 
-            # 没有图表标题、嵌入图片或足够矢量绘图的页面先跳过。
+            # 页码按 1 开始，和 pypdf 提取结果对应。
+            page_number = page_info["page"]
+
+            # 提取本页结构化表格。
+            page_tables = extract_page_tables(
+                pdf_page,
+                page_number,
+            )
+
+            # 从本页提取可能的公式文本行。
+            page_formulas = extract_formula_candidates(
+                page_info["text"],
+                page_number,
+            )
+            # 同一页可能属于两个章节，例如页面中途换章。
+            # 因此表格和公式会分别归到这一页涉及的职责。
+            for role in page_roles:
+                section_tables.setdefault(role, [])
+                section_formulas.setdefault(role, [])
+                section_tables[role].extend(page_tables)
+                section_formulas[role].extend(page_formulas)
+
+            # 公式候选不为空时，将其所在页面也渲染，供视觉 agent 核对。
+            has_table = bool(page_tables)
+            has_formula = bool(page_formulas)
+
+        # 没有视觉内容的页面无需转换成图片。
             if not page_contains_visual_content(
-                    pdf_page,
-                    page_info["text"],
-            ):
+                pdf_page,
+                page_info["text"],
+                has_table=has_table,
+                has_formula=has_formula,
+              ):
                 continue
 
-            # 判断这张页面图还需要附到哪些职责下。
+        # 计算这张图片还能发送给哪些职责 agent。
             roles_to_attach = []
 
             for role in page_roles:
                 images_for_role = section_images.setdefault(role, [])
 
-                # 每个职责最多传入指定数量的页面图。
+                # 每个职责最多发送配置数量的页面图片。
                 if len(images_for_role) < MAX_VISUAL_PAGES_PER_SECTION:
                     roles_to_attach.append(role)
                 else:
-                    # 超出限制的页面只记录数量，不静默忽略。
+                    # 超出数量限制时记录页数，后续会告诉 agent。
                     omitted_visual_pages[role] = (
                             omitted_visual_pages.get(role, 0) + 1
                     )
 
-            # 如果所有相关职责都达到数量上限，就不再渲染这页。
+        # 所有相关职责都达到上限时，跳过图片渲染。
             if not roles_to_attach:
-                continue
+                 continue
 
-            # 渲染页面并转成 Base64，后续交给对应 agent。
+             # 将 PDF 页面渲染并压缩成 Base64 JPEG。
             image_base64 = render_page_as_base64(pdf_page)
 
-            # 一页若跨越多个章节，会分别附给这些职责的 agent。
+            # 一页跨章节时，同一页图片会附给多个相关 agent。
             for role in roles_to_attach:
                 section_images[role].append({
-                    # 保留页码，agent 可以在意见中引用位置。
-                    "page": page_info["page"],
-
-                    # 同时保留页面文本，方便文字和图表相互印证。
+                    "page": page_number,
                     "page_text": page_info["text"],
-
-                    # 图片内容以 Base64 形式交给视觉模型。
                     "image_base64": image_base64,
                 })
 
@@ -294,32 +433,38 @@ def attach_visual_pages(
         # 无论渲染成功还是失败，都关闭 PDF 文档。
         document.close()
 
-    return section_images, omitted_visual_pages
+    return  (
+        section_images,
+        omitted_visual_pages,
+        section_tables,
+        section_formulas,
+    )
 
 def parse_and_group_pdf(pdf_bytes: bytes) -> dict:
-     """解析 PDF 并返回章节正文、页码和按职责分组的页面图片。"""
+     """解析 PDF，返回章节文字、页码、图片、表格和公式候选。"""
      # 先逐页提取文字。
      pages = extract_pdf_text(pdf_bytes)
      # 按章节标题组合正文，并记录章节页码。
      sections, section_pages, roles_by_page = split_pages_into_sections(pages)
-     # 查找并渲染每个职责相关的视觉页面。
-     section_images, omitted_visual_pages = attach_visual_pages(
+     # 提取视觉页面、表格结构、公式候选和省略页面数量。
+     (
+         section_images,
+         omitted_visual_pages,
+         section_tables,
+         section_formulas,
+     ) = attach_visual_pages(
          pdf_bytes,
          pages,
          roles_by_page,
      )
-     # 返回对象包含正文和图像，后续由 review_graph 分配给 agent。
+
+     # 把所有解析结果按职责分别返回给 main 和 review_graph。
      return {
-         # 例如：paper_sections["evaluation"] 是实验章节正文。
          "sections": sections,
-
-         # 例如：section_pages["evaluation"] 是实验章节所在页码。
          "section_pages": section_pages,
-
-         # 例如：section_images["evaluation"] 是实验章节页面图片列表。
          "section_images": section_images,
-
-         # 记录每个职责因数量上限而未附加的页面数。
+         "section_tables": section_tables,
+         "section_formulas": section_formulas,
          "omitted_visual_pages": omitted_visual_pages,
      }
 

@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import TypedDict
 from typing import Any
@@ -47,6 +48,11 @@ class ReviewState(TypedDict, total=False):
 
     # 每个职责因图片数量上限而省略的页面数。
     omitted_visual_pages: dict[str, int]
+    # 各职责识别到的结构化表格。
+    section_tables: dict[str, list[dict[str, Any]]]
+
+    # 各职责识别到的公式候选文字。
+    section_formulas: dict[str, list[dict[str, Any]]]
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +61,21 @@ def run_review_agent(agent_function,state: ReviewState,
     result_key: str,
     agent_name: str,
 ) -> dict:
-    """统一调用章节 agent，并传入该职责的正文和页面图片。"""
+    """统一给章节 agent 传正文、表格、公式候选和页面图片。"""
     try:
+        #取出正文
         sections = state.get("paper_sections",{})
         section_text = sections.get(section_name, "")
         # 取出当前职责对应的页面图片。
         all_section_images = state.get("section_images", {})
         visual_pages = all_section_images.get(section_name, [])
+        # 取出当前职责的结构化表格数据。
+        all_section_tables = state.get("section_tables", {})
+        section_tables = all_section_tables.get(section_name, [])
 
+        # 取出当前职责的公式候选文本。
+        all_section_formulas = state.get("section_formulas", {})
+        section_formulas = all_section_formulas.get(section_name, [])
         # 取出当前职责因图片数量限制而省略的页数。
         omitted_pages_by_section = state.get(
             "omitted_visual_pages",
@@ -72,7 +85,31 @@ def run_review_agent(agent_function,state: ReviewState,
             section_name,
             0,
         )
-        # 调用 agent，同时传入文字和视觉页面。
+        # 将表格以可读 JSON 格式追加到章节文本。
+        if section_tables:
+            section_text += (
+                    "\n\n<structured_tables>\n"
+                    + json.dumps(
+                section_tables,
+                ensure_ascii=False,
+                indent=2,
+            )
+                    + "\n</structured_tables>"
+            )
+            # 将公式候选及其页码追加到章节文本。
+            if section_formulas:
+                section_text += (
+                        "\n\n<formula_candidates>\n"
+                        + json.dumps(
+                    section_formulas,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                        + "\n</formula_candidates>"
+                )
+
+        # 调用 agent；现有 agent 函数接收正文和页面图片。
+        # 表格和公式候选已经合并进 section_text。
         review = agent_function(
             section_text,
             visual_pages=visual_pages,
@@ -80,6 +117,7 @@ def run_review_agent(agent_function,state: ReviewState,
         )
         # 把当前 agent 的结构化审稿结果写入图状态。
         return {result_key: review}
+
     except Exception as exc:
         logger.exception("%s 调用失败", agent_name)
         return {
