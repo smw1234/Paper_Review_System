@@ -1,5 +1,7 @@
 import json
 import logging
+import operator
+from typing import Annotated
 from typing import TypedDict
 from typing import Any
 from langgraph.graph import END, START, StateGraph
@@ -33,8 +35,10 @@ class ReviewState(TypedDict, total=False):
     scored_dimension_count: int
     # 最终汇总报告
     review_report: dict
-    # 任意 agent 节点失败时写入错误信息
-    error: str
+    # 保存审稿节点的错误信息。
+    # operator.add 会把并行节点各自返回的错误列表合并起来，
+    # 避免多个节点同时写同一个普通字段造成状态更新冲突。
+    errors: Annotated[list[str], operator.add]
 
     # 每个职责对应的 PDF 页码。
     section_pages: dict[str, list[int]]
@@ -118,7 +122,11 @@ def run_review_agent(agent_function,state: ReviewState,
     except Exception as exc:
         logger.exception("%s 调用失败", agent_name)
         return {
-            "error": f"{agent_name}调用失败：{type(exc).__name__}: {exc}"
+            # 每个失败节点只返回自己的错误。
+            # LangGraph 会通过 operator.add 合并并行节点返回的列表。
+            "errors": [
+                f"{agent_name}调用失败：{type(exc).__name__}: {exc}"
+            ]
         }
 
 def problem_review_node(state: ReviewState) -> dict:
@@ -179,8 +187,8 @@ def check_reviews_node(state: ReviewState) -> dict:
     return {}
 
 def route_after_reviews(state: ReviewState) -> str:
-    """任何审稿节点出错就跳过汇总。"""
-    if state.get("error"):
+    """检查并行审稿节点是否有失败；有失败就跳过汇总。"""
+    if state.get("errors"):
         return "end"
     return "report"
 

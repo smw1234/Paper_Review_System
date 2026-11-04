@@ -44,6 +44,23 @@ function formatScore(score) {
     : `${score} / 5`;
 }
 
+function clearSelectedFile() {
+  // 清除上一次有效选择，避免无效文件被拒绝后仍能提交旧文件。
+  file = null;
+  report = null;
+
+  // 清空文件信息并隐藏报告，保持页面状态与当前选择一致。
+  info.replaceChildren();
+  info.hidden = true;
+  section.hidden = true;
+
+  // 没有有效 PDF 时不能开始审稿。
+  button.disabled = true;
+
+  // 清空 input，允许用户之后重新选择同一个文件。
+  input.value = "";
+}
+
 function chooseFile(selectedFile) {
   if (!selectedFile) return;
 
@@ -52,11 +69,15 @@ function chooseFile(selectedFile) {
     selectedFile.name.toLowerCase().endsWith(".pdf");
 
   if (!isPdf) {
+    // 丢弃之前选中的有效文件，避免误提交旧文件。
+    clearSelectedFile();
     setStatus("请选择 PDF 文件。", "error");
     return;
   }
 
   if (selectedFile.size > MAX_FILE_SIZE) {
+    // 超过大小限制的文件同样清除之前的选择。
+    clearSelectedFile();
     setStatus("文件不能超过 30 MB。", "error");
     return;
   }

@@ -1,6 +1,11 @@
 import logging
 from pathlib import Path
 from typing import Any
+# 捕获 pypdf 读取损坏 PDF 时常见的解析异常。
+from pypdf.errors import PdfReadError
+
+# 用于捕获 PyMuPDF 打开无效 PDF 时的文件数据异常。
+import pymupdf
 
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -61,10 +66,18 @@ async def review(file: UploadFile=File(...))->ApiResponse:
     try:
         # parser 现在返回章节文字、页码、图片及省略数量。
         paper_data = parse_and_group_pdf(pdf_bytes)
-    except ValueError as e:
+    except (ValueError,PdfReadError,pymupdf.FileDataError) as e:
         # PDF 无法读取或没有文字时，转换成 HTTP 400 错误。
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=400, detail=f"PDF 无法解析：{e}",) from e
+    except Exception as exc:
+        # 记录完整错误堆栈供开发者排查。
+        # 不把内部异常细节直接返回给前端。
+        logger.exception("PDF 解析过程中发生未预期错误")
 
+        raise HTTPException(
+            status_code=500,
+            detail="PDF 解析时发生内部错误，请稍后重试。",
+        ) from exc
         # 将 parser 返回的四类数据放入 LangGraph 初始状态。
     result = review_graph.invoke({
         # 各职责对应的章节正文。
@@ -106,9 +119,12 @@ async def review(file: UploadFile=File(...))->ApiResponse:
     #         for role, images in paper_data["section_images"].items()
     #     },
     # )
-
-    if result.get("error"):
-        raise HTTPException(status_code=502, detail=result["error"])
+    # errors 是并行审稿节点返回的错误列表。
+    errors=result.get("errors",[])
+    if errors:
+        # 把多个节点的错误合并成一条接口错误信息，方便前端显示。
+        error_message="\n".join(errors)
+        raise HTTPException(status_code=502, detail=error_message)
 
 
     return ApiResponse(
@@ -124,9 +140,7 @@ if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
+#微调 docker部署
 
-# 2agent工具集成
-# 4docker部署
-#3微调
 
 

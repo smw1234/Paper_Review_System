@@ -7,7 +7,7 @@ from agents.review_schema import ReviewResult
 from agents.multimodal_input import build_section_message
 
 llm = ChatOpenAI(
-    model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+    model=os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
     api_key=os.environ.get("DEEPSEEK_API_KEY"),
     base_url=os.environ.get(
         "DEEPSEEK_BASE_URL",

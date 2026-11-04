@@ -7,7 +7,7 @@ class ReviewResult(BaseModel):
     """单个审稿 agent 的结构化审稿结果。"""
 
     score: int | None = Field(
-        description="1到5分；材料不足以判断时为 null"
+        default=None,ge=1,le=5,description="1到5分；材料不足以判断时为 null"
     )
     score_reason: str = Field(
         description="评分依据；材料不足时说明缺少什么"

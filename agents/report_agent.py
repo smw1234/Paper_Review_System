@@ -5,7 +5,7 @@ from langchain_openai import ChatOpenAI
 
 
 llm = ChatOpenAI(
-    model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+    model=os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
     api_key=os.environ.get("DEEPSEEK_API_KEY"),
     base_url=os.environ.get(
         "DEEPSEEK_BASE_URL",

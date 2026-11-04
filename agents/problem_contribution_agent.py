@@ -3,6 +3,7 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from agents.review_schema import ReviewResult
 from agents.multimodal_input import build_section_message
+from review_tools import search_related_papers
 
 llm = ChatOpenAI(
     model=os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
@@ -42,6 +43,19 @@ system_prompt = """
 - 4 分：总体良好，只有少量问题需要修改。
 - 5 分：该维度表现充分，没有发现明显问题。
 
+## 相关工作检索工具规则
+
+- 当判断贡献是否有差异需要外部文献依据时，使用 search_related_papers 检索相近工作。
+- 查询词应概括论文的研究问题、核心方法和应用领域；最多尝试两组不同关键词。
+- 将检索结果作为候选相关工作，比较研究问题、方法、数据或应用场景、贡献边界。
+- 检索结果只有摘要时，只能比较摘要中明确的信息；不能推断论文全文中的方法细节。
+- 在意见中列出使用到的论文标题、年份和链接。
+- 不得把“没有检索到相似论文”写成“证明该工作具有创新性”。
+- 如果检索失败，或返回结果不足以比较，应说明无法据此判断创新性。
+- 查询词只能使用 3–8 个概括性主题或方法关键词，不得复制论文标题、摘要或正文句子。
+- 不要发送作者姓名、未公开数据集名称、项目名称、实验结果等可能识别论文或暴露未发表内容的信息。
+- 如果无法在不包含论文具体内容的情况下构造有意义的关键词，就不要调用检索工具，并说明无法进行外部相关工作检索。
+
 请遵守以下要求：
 1. 评分只针对你负责的维度，不要评价其他 agent 负责的内容。
 2. 评分必须根据用户提供的论文内容，不得根据常识或猜测补出论文中没有的信息。
@@ -65,7 +79,7 @@ system_prompt = """
 # 创建“问题与贡献审稿” agent
 agent = create_agent(
     model=llm,
-    tools=[],
+    tools=[search_related_papers],
     system_prompt= system_prompt,
     response_format=ReviewResult,)
 
